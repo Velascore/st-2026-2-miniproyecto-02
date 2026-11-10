@@ -41,15 +41,34 @@ La serie mide el **índice de producción industrial de la fabricación de cajas
 cartón corrugado y fibra sólida** en EE. UU. (NAICS 32221), base 2017 = 100 y
 sin ajuste estacional, que publica la Reserva Federal en FRED con el código
 [IPN32221N](https://fred.stlouisfed.org/series/IPN32221N). Es **mensual**, va de
-**2010-01 a 2026-06** con **198 observaciones** y no tiene meses vacíos. La
-preparación es la misma del miniproyecto 1: no hay huecos que rellenar y los
-atípicos —dos episodios económicos reales, el desplome de la COVID (abr–jun
-2020) y el rebote post-pandemia (feb–jun 2022)— se **winsorizan** recortando al
-límite, sin borrar meses, los puntos cuyo residuo de una STL robusta (periodo
-12) se sale de la banda $`[Q_1 - 3\,IQR,\; Q_3 + 3\,IQR] = [-2{,}58,\; +2{,}64]`$.
-Se winsorizan **16 puntos**, los mismos del miniproyecto 1.
+**2010-01 a 2026-06** con **198 observaciones** y no tiene meses vacíos.
 
 ![La serie](../figuras/serie.png)
+
+**Preparación: un único paso de limpieza.** No hay huecos que rellenar (ningún
+mes vacío). Sí hay **atípicos**, pero no son errores de medición: son dos
+episodios económicos reales —el desplome de la producción por la COVID (abr–jun
+2020) y el rebote post-pandemia (feb–jun 2022)—. Borrar esos meses perdería
+información verdadera y rompería la serie mensual; dejarlos intactos inflaría la
+varianza y dejaría que dominaran el ajuste del SARIMA. La salida intermedia es
+**winsorizar**: *recortar al límite* solo los valores más extremos, sin borrar
+ningún mes.
+
+¿Cómo se decide qué es "extremo"? No sobre el nivel de la serie (que sube y baja
+por tendencia y estación), sino sobre su **residuo**: se descompone la serie con
+una **STL robusta** (periodo 12) en tendencia + estacionalidad + residuo, y se
+marca como atípico el mes cuyo residuo cae fuera de la banda
+$`[Q_1 - 3\,\mathrm{IQR},\; Q_3 + 3\,\mathrm{IQR}] = [-2{,}58,\; +2{,}64]`$ —la
+misma idea del diagrama de caja, pero con 3·IQR en vez del 1,5·IQR habitual,
+para tocar solo lo verdaderamente anómalo—. A esos puntos se les lleva justo al
+borde de la banda. Son **16 meses**, los mismos del miniproyecto 1.
+
+![Residuo de la STL y banda de winsorización](../figuras/atipicos.png)
+
+En el *boxplot*, la caja azul es el rango intercuartílico del residuo y las
+líneas rojas son la banda; los **16 puntos rojos** por fuera son los meses que se
+recortan. Casi todos caen muy a la izquierda (la caída de la COVID) o a la
+derecha (el rebote): los dos episodios que motivaron la limpieza.
 
 El mejor modelo clásico del miniproyecto 1 es el **SARIMAX(0,1,2)(0,1,2)₁₂ con
 los días hábiles del mes como exógena**. Con $z_t$ de media cero, su ecuación es

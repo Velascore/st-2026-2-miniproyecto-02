@@ -191,6 +191,47 @@ def graficar_serie(serie):
     plt.close(figura)
 
 
+def graficar_atipicos(serie):
+    """Boxplot del residuo de la STL robusta con la banda de winsorización.
+
+    Hace visible el criterio de atípicos: la caja es el rango intercuartílico
+    del residuo de la descomposición STL (índice − tendencia − estacionalidad);
+    las líneas rojas son la banda Q1−3·IQR .. Q3+3·IQR, y los puntos rojos los
+    meses cuyo residuo cae fuera y que por eso se recortan al límite. Guarda
+    figuras/atipicos.png.
+    """
+    serie = serie.astype(float)
+    if serie.isna().any():
+        serie = serie.interpolate(method="time")
+    resid = STL(serie, period=PERIODO, robust=True).fit().resid
+    q1, q3 = resid.quantile(0.25), resid.quantile(0.75)
+    iqr = q3 - q1
+    bajo, alto = q1 - 3 * iqr, q3 + 3 * iqr
+    fuera = ((resid < bajo) | (resid > alto)).to_numpy()
+    valores = resid.to_numpy()
+
+    figura, eje = plt.subplots(figsize=(9, 3.2))
+    eje.boxplot(valores, vert=False, widths=0.5, showfliers=False,
+                patch_artist=True, boxprops=dict(facecolor="lightsteelblue"),
+                medianprops=dict(color="navy"))
+    y = np.random.default_rng(SEMILLA).normal(1, 0.05, len(valores))
+    eje.scatter(valores[~fuera], y[~fuera], s=10, color="gray", alpha=0.5,
+                label="dentro de la banda")
+    eje.scatter(valores[fuera], y[fuera], s=30, color="crimson", zorder=3,
+                label=f"{int(fuera.sum())} atípicos winsorizados")
+    eje.axvline(bajo, ls="--", color="crimson")
+    eje.axvline(alto, ls="--", color="crimson")
+    eje.set_title("Residuo de la STL robusta y banda de winsorización "
+                  f"[{bajo:.2f}, {alto:.2f}]")
+    eje.set_yticks([])
+    eje.set_xlabel("residuo (índice − tendencia − estacionalidad)")
+    eje.legend(loc="upper left", fontsize=8)
+    figura.tight_layout()
+    figura.savefig(FIGURAS / "atipicos.png", dpi=120)
+    plt.close(figura)
+    print(f"Atípicos en figuras/atipicos.png ({int(fuera.sum())} fuera de banda)")
+
+
 # ============================================================
 # 2. La tabla supervisada
 # ============================================================
@@ -648,6 +689,7 @@ def main():
           f"{cruda.index[-1]:%Y-%m}, {cruda.isna().sum()} vacíos")
     serie = preparar(cruda)
     graficar_serie(serie)
+    graficar_atipicos(cruda)
 
     print("1. Línea base y modelo a superar")
     filas = [fila("estacional ingenuo", serie,
