@@ -46,7 +46,7 @@ preparación es la misma del miniproyecto 1: no hay huecos que rellenar y los
 atípicos —dos episodios económicos reales, el desplome de la COVID (abr–jun
 2020) y el rebote post-pandemia (feb–jun 2022)— se **winsorizan** recortando al
 límite, sin borrar meses, los puntos cuyo residuo de una STL robusta (periodo
-12) se sale de la banda $[Q_1 - 3\,IQR,\; Q_3 + 3\,IQR] = [-2{,}58,\; +2{,}64]$.
+12) se sale de la banda $`[Q_1 - 3\,IQR,\; Q_3 + 3\,IQR] = [-2{,}58,\; +2{,}64]`$.
 Se winsorizan **16 puntos**, los mismos del miniproyecto 1.
 
 ![La serie](../figuras/serie.png)
@@ -85,23 +85,23 @@ cuidando que **ninguna fila use información posterior al mes que predice**.
 Cada fila $t$ de la tabla tiene **16 columnas**, todas construidas para no ver el
 mes que predice:
 
-- **Rezagos 1 a 12** del objetivo: $\text{rezago}_k(t) = z_{t-k}$, con
+- **Rezagos 1 a 12** del objetivo: $`\text{rezago}_k(t) = z_{t-k}`$, con
   $k=1,\dots,12$ (`z.shift(k)`). Cubren un año completo de historia.
 - **El mes del año, cíclico** (`mes_sin`, `mes_cos`): $\sin(2\pi m_t/12)$ y
   $\cos(2\pi m_t/12)$, con $m_t$ el número de mes, para que
   diciembre quede junto a enero.
 - **Dos ventanas móviles** sobre el objetivo corrido un mes (`media_movil_3`, `desv_movil_6`):
-  $\tfrac{1}{3}\sum_{j=1}^{3} z_{t-j}$ y
-  $\mathrm{sd}(z_{t-1},\dots,z_{t-6})$.
+  $`\tfrac{1}{3}\sum_{j=1}^{3} z_{t-j}`$ y
+  $`\mathrm{sd}(z_{t-1},\dots,z_{t-6})`$.
 
 Los modelos **no aprenden el nivel sino la diferencia con el mismo mes del año
-anterior** (`OBJETIVO = "dif12"`): $z_t = y_t - y_{t-12} = (1-B^{12})\,y_t$. Se
+anterior** (`OBJETIVO = "dif12"`): $`z_t = y_t - y_{t-12} = (1-B^{12})\,y_t`$. Se
 elige así porque la serie tiene tendencia y una estacionalidad fuerte (fuerza
 estacional $F_s = 0{,}87$ en el miniproyecto 1); al restar $y_{t-12}$ se quita
 casi toda la tendencia y la estacionalidad y el objetivo queda **casi
 estacionario**, que es lo que KNN, SVR y los árboles extrapolan bien. Sobre el
 nivel, en cambio, esos modelos no saben extrapolar una tendencia creciente. El
-pronóstico se devuelve al nivel con $\hat y_t = y_{t-12} + \hat z_t$.
+pronóstico se devuelve al nivel con $`\hat y_t = y_{t-12} + \hat z_t`$.
 
 **Prueba de que ninguna fila ve el mes que predice.** `comprobar_sin_fuga` altera
 el valor de cada mes con un cambio grande ($+100$) y verifica que la fila de la
@@ -113,7 +113,7 @@ calculan sobre `z.shift(1)`, es decir hasta el mes anterior.
 
 **Pronóstico recursivo a 12 meses.** En cada paso `recursivo` agrega el mes
 siguiente como `NaN`, arma su fila con la tabla, pronostica el objetivo, lo
-lleva al nivel con $\hat y_t = y_{t-12}+\hat z_t$ y lo **escribe como si fuera
+lleva al nivel con $`\hat y_t = y_{t-12}+\hat z_t`$ y lo **escribe como si fuera
 dato** antes de pasar al mes siguiente; así cada pronóstico entra como rezago del
 mes que sigue. **El escalador vive dentro de cada modelo** (`StandardScaler` en
 el *pipeline* de KNN y SVR, y la estandarización de $X$ y $z$ dentro de la clase
