@@ -23,7 +23,7 @@ Se winsorizan **16 puntos**, los mismos del miniproyecto 1.
 El mejor modelo clásico del miniproyecto 1 es el **SARIMAX(0,1,2)(0,1,2)₁₂ con
 los días hábiles del mes como exógena**. Con $z_t$ de media cero, su ecuación es
 
-$$y_t = \beta\,\text{dias\_habiles}_t + \eta_t,\qquad
+$$y_t = \beta\,\text{(días hábiles)}_t + \eta_t,\qquad
 (1-B)(1-B^{12})\,\eta_t = (1+\theta_1 B+\theta_2 B^2)\,(1+\Theta_1 B^{12}+\Theta_2 B^{24})\,\varepsilon_t,$$
 
 es decir, una diferencia regular y una estacional ($d=1,\,D=1$), una media móvil
@@ -50,12 +50,12 @@ mes que predice:
 
 - **Rezagos 1 a 12** del objetivo: $\text{rezago}_k(t) = z_{t-k}$, con
   $k=1,\dots,12$ (`z.shift(k)`). Cubren un año completo de historia.
-- **El mes del año, cíclico:** $\text{mes\_sin}(t)=\sin(2\pi m_t/12)$ y
-  $\text{mes\_cos}(t)=\cos(2\pi m_t/12)$, con $m_t$ el número de mes, para que
+- **El mes del año, cíclico** (`mes_sin`, `mes_cos`): $\sin(2\pi m_t/12)$ y
+  $\cos(2\pi m_t/12)$, con $m_t$ el número de mes, para que
   diciembre quede junto a enero.
-- **Dos ventanas móviles** sobre el objetivo corrido un mes:
-  $\text{media\_movil\_3}(t)=\tfrac{1}{3}\sum_{j=1}^{3} z_{t-j}$ y
-  $\text{desv\_movil\_6}(t)=\operatorname{sd}(z_{t-1},\dots,z_{t-6})$.
+- **Dos ventanas móviles** sobre el objetivo corrido un mes (`media_movil_3`, `desv_movil_6`):
+  $\tfrac{1}{3}\sum_{j=1}^{3} z_{t-j}$ y
+  $\operatorname{sd}(z_{t-1},\dots,z_{t-6})$.
 
 Los modelos **no aprenden el nivel sino la diferencia con el mismo mes del año
 anterior** (`OBJETIVO = "dif12"`): $z_t = y_t - y_{t-12} = (1-B^{12})\,y_t$. Se
