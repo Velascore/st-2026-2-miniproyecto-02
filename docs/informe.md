@@ -247,6 +247,23 @@ que esta LSTM; sí que es mucho más barato y estable.
 | XGBoost | 2.70 | 2.34 | 2.60 | 1 342 | 2.6 |
 | KNN | 2.76 | 2.48 | 2.75 | 2 592 | 2.1 |
 
+**El clásico frente al mejor de cada familia.** Leída la tabla cara a cara:
+
+- **SARIMAX (clásico) — RMSE 1.63.** La referencia a superar.
+- **Mejor red, LSTM — 1.75.** Queda un 7 % por encima, pero con un matiz
+  decisivo: repetida con 5 semillas su RMSE va de 1.50 a 1.96 (±0.19). La
+  diferencia de 0.12 con el clásico es *menor que ese ruido*, así que **no se
+  puede afirmar que el SARIMAX le gane de forma fiable** —sí que lo logra con 6
+  parámetros frente a 1 233—.
+- **Mejor ML, SVR — 2.02.** Un 24 % por encima del clásico, y esta vez el salto
+  no es azar (el SVR es determinista). Random Forest (2.04) va casi igual.
+- **Piso, estacional ingenuo — 2.17.** Dos de los cuatro modelos de ML, XGBoost
+  (2.70) y KNN (2.76), quedan *por debajo* de este piso: aportan menos que
+  repetir sin más el mismo mes del año anterior.
+
+En una frase: el único que se le acerca al SARIMAX es la LSTM, y aun así no lo
+supera de forma fiable; el resto queda claramente detrás.
+
 ![Pronósticos desde el último origen](../figuras/pronosticos.png)
 
 **Ninguna red ni modelo de aprendizaje automático supera al clásico** en el
