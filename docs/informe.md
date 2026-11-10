@@ -31,9 +31,10 @@ calculan tres, todas donde **más bajo es mejor**:
 - **MAPE** (error porcentual absoluto medio): el mismo error pero en porcentaje,
   para leerlo sin pensar en la escala.
 
-La **fila de referencia** es el mejor modelo clásico del miniproyecto 1. La
-pregunta de todo el miniproyecto es si algún modelo de aprendizaje automático o
-profundo lo mejora **de forma fiable** bajo esta misma regla.
+> [!NOTE]
+> La **fila de referencia** es el mejor modelo clásico del miniproyecto 1. La
+> pregunta de todo el miniproyecto es: **¿algún modelo de aprendizaje automático
+> o profundo lo mejora de forma fiable bajo esta misma regla?**
 
 ## 1. La serie y el modelo a superar
 
@@ -80,8 +81,8 @@ es decir, una diferencia regular y una estacional ($d=1,\,D=1$), una media móvi
 regular de orden 2 y una estacional de orden 2. En este *backtest* da
 
 | Modelo | RMSE | MAE | MAPE (%) |
-|---|---|---|---|
-| SARIMAX(0,1,2)(0,1,2)₁₂ + días hábiles | **1.63** | 1.37 | 1.51 |
+|---|--:|--:|--:|
+| **SARIMAX(0,1,2)(0,1,2)₁₂ + días hábiles** | **1.63** | **1.37** | **1.51** |
 
 idénticas a las del miniproyecto 1. **Una diferencia de implementación, sin
 efecto en las cifras:** el miniproyecto 2 solo admite `numpy`, `pandas`,
@@ -130,6 +131,11 @@ través de $z_t$— para predecir $y_t$. El guion imprime
 Funciona porque todos los rezagos son $z_{t-k}$ con $k\ge 1$ y las ventanas se
 calculan sobre `z.shift(1)`, es decir hasta el mes anterior.
 
+> [!IMPORTANT]
+> **Sin fuga, comprobado en el código.** La prueba `comprobar_sin_fuga` revisa
+> las **174 filas** y ninguna cambia al alterar el mes que predice: ningún modelo
+> usa información del futuro para predecir.
+
 **Pronóstico recursivo a 12 meses.** En cada paso `recursivo` agrega el mes
 siguiente como `NaN`, arma su fila con la tabla, pronostica el objetivo, lo
 lleva al nivel con $`\hat y_t = y_{t-12}+\hat z_t`$ y lo **escribe como si fuera
@@ -156,7 +162,7 @@ tramo siguiente, nunca al revés, y **ninguno de los 24 meses del *backtest*
 participa en la elección**. Las rejillas y lo elegido:
 
 | Modelo | Rejilla | Elegido | RMSE val. |
-|---|---|---|---|
+|---|---|---|--:|
 | KNN | `n_neighbors` ∈ {3,5,10,15} | `n_neighbors=5` | 2.29 |
 | SVR | `C` ∈ {1,10,100}, `epsilon` ∈ {0.05,0.1,0.2} | `C=1, epsilon=0.05` | 2.62 |
 | Random Forest | `max_depth` ∈ {None,3,5,10}, `min_samples_leaf` ∈ {1,2,4} | `max_depth=10, min_samples_leaf=1` | 2.24 |
@@ -186,7 +192,7 @@ patrones locales. Todas con semilla fija y con $X$ y $z$ escalados con el
 entrenamiento de cada origen:
 
 | Red | Entrada | Parámetros |
-|---|---|---|
+|---|---|--:|
 | **MLP** (32 ocultas) | 16 columnas sueltas | 577 |
 | **LSTM** (16 ocultas) | secuencia $(lote, 12, 1)$ | 1 233 |
 | **Conv1D** (16 canales) | secuencia $(lote, 12, 1)$ | 81 |
@@ -211,8 +217,8 @@ en cambio, tiene un mínimo de validación real en la **época 19**, y la **Conv
 en la **época 4**. En el *backtest*:
 
 | Red | RMSE |
-|---|---|
-| LSTM (16 ocultas), 19 épocas | 1.75 |
+|---|--:|
+| **LSTM (16 ocultas), 19 épocas** | **1.75** |
 | Conv1D (16 canales), 4 épocas | 1.98 |
 | MLP (32 ocultas), 2 épocas | 2.51 |
 
@@ -224,20 +230,21 @@ por el *backtest*:
 |---|---|---|---|---|---|---|---|
 | RMSE | 1.747 | 1.963 | 1.889 | 1.500 | 1.914 | **1.803** | **0.187** |
 
-El dato clave: la distancia entre la LSTM (media 1,80) y el clásico (1,63) es
-**$0{,}17$**, **menor que la desviación $0{,}19$ que la propia LSTM tiene entre
-semillas**. Es decir, la ventaja del clásico sobre la LSTM es del tamaño del
-ruido de inicialización de la red: con la semilla 2029 la LSTM baja a **1,500** y
-supera al clásico. No se puede afirmar que el clásico sea de forma fiable mejor
-que esta LSTM; sí que es mucho más barato y estable.
+> [!IMPORTANT]
+> **El dato clave:** la distancia entre la LSTM (media 1,80) y el clásico (1,63)
+> es **0,17**, **menor que la desviación 0,19 que la propia LSTM tiene entre
+> semillas**. La ventaja del clásico sobre la LSTM es del tamaño del ruido de
+> inicialización de la red: con la semilla 2029 la LSTM baja a **1,500** y supera
+> al clásico. No se puede afirmar que el clásico sea de forma fiable mejor que
+> esta LSTM; sí que es mucho más barato y estable.
 
 ## 5. La tabla y la elección
 
 `resultados/metricas.csv`, ordenada por RMSE:
 
 | Modelo | RMSE | MAE | MAPE (%) | Parámetros | Segundos |
-|---|---|---|---|---|---|
-| SARIMAX(0,1,2)(0,1,2)₁₂ + días hábiles | **1.63** | 1.37 | 1.51 | 6 | 4.4 |
+|---|--:|--:|--:|--:|--:|
+| **SARIMAX(0,1,2)(0,1,2)₁₂ + días hábiles** | **1.63** | **1.37** | **1.51** | **6** | **4.4** |
 | LSTM (16 ocultas), 19 épocas | 1.75 | 1.46 | 1.62 | 1 233 | 1.7 |
 | Conv1D (16 canales), 4 épocas | 1.98 | 1.70 | 1.89 | 81 | 1.1 |
 | SVR | 2.02 | 1.71 | 1.89 | 2 687 | 0.9 |
@@ -279,6 +286,12 @@ leyenda son los del **último origen** —donde la LSTM baja a 1,4—, no los
 promedios de la tabla.)
 
 ## 6. Conclusión
+
+> [!TIP]
+> **Modelo recomendado: SARIMAX(0,1,2)(0,1,2)₁₂ + días hábiles.** Menor RMSE
+> (1,63), determinista, solo 6 parámetros y pronóstico explicable. Ningún modelo
+> de aprendizaje automático ni red lo supera de forma fiable en esta serie
+> mensual corta y muy estacional.
 
 El modelo que el grupo **pondría en uso es el SARIMAX(0,1,2)(0,1,2)₁₂ + días
 hábiles**. Es el de menor RMSE (1,63), es **determinista** (no depende de una
