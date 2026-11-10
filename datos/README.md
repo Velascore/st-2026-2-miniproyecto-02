@@ -1,23 +1,19 @@
 # datos
 
-La serie del grupo va en esta carpeta, en CSV: la misma del miniproyecto 1.
-Copie aquí la ficha que llenó entonces y borre la serie de ejemplo cuando ya
-no la use.
+Ficha de la serie del grupo.
 
 | Campo | Valor |
 |---|---|
-| Archivo | {{nombre del CSV}} |
-| Qué mide | {{...}} |
-| Fuente | {{institución o conjunto de datos, con enlace}} |
-| Licencia | {{...}} |
+| Archivo | `IPN32221N_cajas_carton_corrugado.csv` |
+| Qué mide | Índice de producción industrial de **fabricación de cajas de cartón corrugado y fibra sólida** (EE. UU., NAICS 32221), base 2017 = 100, **sin ajuste estacional** |
+| Fuente | Board of Governors of the Federal Reserve System (US), vía FRED — serie **IPN32221N**: <https://fred.stlouisfed.org/series/IPN32221N> |
+| Licencia | Dominio público (obra del Gobierno Federal de EE. UU.); FRED la marca como *Public Domain: Citation Requested*, se usa citando la fuente |
 | Frecuencia | mensual |
-| Periodo | {{primer mes}} a {{último mes}} ({{n}} observaciones) |
-| Columna de fecha | {{...}} |
-| Columna que se pronostica | {{...}} |
+| Periodo | 2010-01 a 2026-06 (198 observaciones) |
+| Columna de fecha | `observation_date` |
+| Columna que se pronostica | `IPN32221N` |
 
-## Serie de ejemplo
-
-`air_passengers.csv`: pasajeros mensuales de una aerolínea entre 1949 y 1960,
-la serie clásica de Box y Jenkins, tomada de Kaggle
-(`rakannimer/air-passengers`). Solo sirve para comprobar que el guion corre;
-el miniproyecto se hace con la serie del grupo.
+La serie es mensual, pública, con 198 observaciones (> 60) y estacionalidad
+marcada (picos en junio y octubre, mínimos en diciembre y enero), por lo que
+cumple las condiciones del miniproyecto y permite la diferencia estacional y
+el SARIMA. Es la misma serie que el grupo usa en los talleres.

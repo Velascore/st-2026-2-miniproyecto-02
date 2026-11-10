@@ -25,6 +25,7 @@ from sklearn.neighbors import KNeighborsRegressor  # noqa: E402
 from sklearn.pipeline import make_pipeline  # noqa: E402
 from sklearn.preprocessing import StandardScaler  # noqa: E402
 from sklearn.svm import SVR  # noqa: E402
+from statsmodels.tsa.seasonal import STL  # noqa: E402
 from statsmodels.tsa.statespace.sarimax import SARIMAX  # noqa: E402
 from torch import nn  # noqa: E402
 from xgboost import XGBRegressor  # noqa: E402
@@ -50,36 +51,133 @@ ULTIMO = {}
 # ============================================================
 # 1. La serie y el modelo a superar
 # ============================================================
-# TODO: los mismos datos del miniproyecto 1: copie la serie a datos/ con su
-# ficha en datos/README.md y cambie estos cuatro datos. La serie de ejemplo
-# solo sirve para probar que el guion corre.
-ARCHIVO = "datos/air_passengers.csv"
-FECHA = "Month"
-VALOR = "#Passengers"
+# Los mismos datos del miniproyecto 1: índice de producción industrial de
+# fabricación de cajas de cartón corrugado (EE. UU., FRED IPN32221N), mensual.
+ARCHIVO = "datos/IPN32221N_cajas_carton_corrugado.csv"
+FECHA = "observation_date"
+VALOR = "IPN32221N"
 PERIODO = 12
+
+# El mejor modelo clásico del miniproyecto 1 y sus órdenes, fijos aquí.
+ORDEN = (0, 1, 2)
+ESTACIONAL = (0, 1, 2, PERIODO)
 
 
 def preparar(serie):
-    """TODO: la misma preparación del miniproyecto 1 (huecos y datos atípicos).
+    """La misma preparación del miniproyecto 1: winsoriza los atípicos.
 
-    Debe devolver una serie sin NaN.
+    La serie IPN32221N no tiene meses vacíos (0 NaN), así que no hay huecos que
+    rellenar. Los atípicos no son errores de medición sino dos episodios
+    económicos reales —el desplome de la COVID (abr–jun 2020) y el rebote
+    post-pandemia (feb–jun 2022)—, que inflan la varianza del residuo y pueden
+    dominar el ajuste del SARIMA. La decisión es *winsorizarlos*: recortar al
+    límite, sin borrar meses, solo los puntos cuyo residuo de una STL robusta
+    (periodo 12) se sale de la banda Q1−3·IQR .. Q3+3·IQR. Devuelve una serie
+    sin NaN.
     """
-    return serie
+    serie = serie.astype(float)
+    if serie.isna().any():  # por robustez; la serie base no tiene huecos
+        serie = serie.interpolate(method="time")
+    resid = STL(serie, period=PERIODO, robust=True).fit().resid
+    q1, q3 = resid.quantile(0.25), resid.quantile(0.75)
+    iqr = q3 - q1
+    bajo, alto = q1 - 3 * iqr, q3 + 3 * iqr
+    exceso = resid - resid.clip(bajo, alto)   # 0 donde no hay atípico
+    limpia = serie - exceso                    # recorta solo los puntos fuera de banda
+    limpia.name = serie.name
+    print(f"Preparar: 0 huecos; {int((exceso != 0).sum())} atípicos winsorizados "
+          f"(banda residuo STL [{bajo:.2f}, {alto:.2f}])")
+    return limpia
+
+
+# ---------- Festivos federales de EE. UU. (sin la librería `holidays`) ----------
+# El miniproyecto 2 solo admite numpy, pandas, matplotlib, statsmodels,
+# scikit-learn, xgboost y torch, así que la exógena de días hábiles del
+# miniproyecto 1 recalcula los festivos federales por sus reglas. Reproduce
+# exactamente el conteo mensual de días hábiles de `holidays.US()`.
+
+def _enesimo_lunes(anio, mes, weekday, n):
+    """n-ésimo `weekday` (0=lunes) del mes; n negativo cuenta desde el final."""
+    dias = pd.date_range(f"{anio}-{mes:02d}-01", periods=31, freq="D")
+    dias = dias[dias.month == mes]
+    coinc = dias[dias.weekday == weekday]
+    return coinc[n - 1] if n > 0 else coinc[n]
+
+
+def _observado(fecha):
+    """Regla federal: sábado -> viernes anterior; domingo -> lunes siguiente."""
+    if fecha.weekday() == 5:
+        return fecha - pd.Timedelta(days=1)
+    if fecha.weekday() == 6:
+        return fecha + pd.Timedelta(days=1)
+    return fecha
+
+
+def _festivos_eeuu(anios):
+    """Fechas de festivos federales de EE. UU., con el día observado si cae en fin de semana."""
+    fechas = set()
+    for anio in anios:
+        fijos = [pd.Timestamp(anio, 1, 1), pd.Timestamp(anio, 7, 4),
+                 pd.Timestamp(anio, 11, 11), pd.Timestamp(anio, 12, 25)]
+        if anio >= 2021:
+            fijos.append(pd.Timestamp(anio, 6, 19))   # Juneteenth, federal desde 2021
+        moviles = [_enesimo_lunes(anio, 1, 0, 3),      # MLK
+                   _enesimo_lunes(anio, 2, 0, 3),      # Washington
+                   _enesimo_lunes(anio, 5, 0, -1),     # Memorial
+                   _enesimo_lunes(anio, 9, 0, 1),      # Trabajo
+                   _enesimo_lunes(anio, 10, 0, 2),     # Colón
+                   _enesimo_lunes(anio, 11, 3, 4)]     # Acción de Gracias
+        for f in fijos:
+            fechas.add(f.date())
+            fechas.add(_observado(f).date())
+        for f in moviles:
+            fechas.add(f.date())
+    return fechas
+
+
+def exogenas(serie):
+    """Días hábiles de cada mes (lunes a viernes, sin festivos federales de EE. UU.).
+
+    Es una variable de calendario: depende solo de la fecha, se conoce de
+    antemano para cualquier mes futuro y por eso nunca introduce fuga. Cubre el
+    índice de la serie y los 12 meses siguientes, para poder pronosticar.
+    """
+    idx = pd.date_range(serie.index[0],
+                        serie.index[-1] + pd.offsets.MonthBegin(12), freq="MS")
+    festivos = _festivos_eeuu(range(idx[0].year, idx[-1].year + 1))
+    conteo = []
+    for mes in idx:
+        dias = pd.date_range(mes.replace(day=1),
+                             mes + pd.offsets.MonthEnd(0), freq="D")
+        conteo.append(sum(1 for dia in dias
+                          if dia.weekday() < 5 and dia.date() not in festivos))
+    return pd.DataFrame({"dias_habiles": conteo}, index=idx, dtype=float)
 
 
 def modelo_clasico(serie):
-    """TODO: devuelva la función modelo(entrenamiento, h) del mejor modelo del
-    miniproyecto 1, con los mismos órdenes y la misma transformación.
+    """La función modelo(entrenamiento, h) del mejor modelo del miniproyecto 1:
+    SARIMAX(0,1,2)(0,1,2)₁₂ con los días hábiles del mes como exógena.
 
-    Copie aquí lo que esa función necesite, como sus variables exógenas.
-    Dentro de modelo, guarde el ajuste en ULTIMO["modelo"] para que la tabla
-    cuente sus parámetros.
+    La exógena de calendario se precalcula sobre toda la serie y sus 12 meses
+    siguientes; dentro del backtest cada origen usa solo x.loc[entrenamiento] y
+    los días hábiles de las fechas siguientes (calendario, no datos futuros de
+    la serie), así que no hay fuga. El ajuste se guarda en ULTIMO["modelo"]
+    para contar sus parámetros.
     """
-    raise NotImplementedError("el mejor modelo del miniproyecto 1")
+    x = exogenas(serie)
+
+    def modelo(entrenamiento, h):
+        x_tr = x.loc[entrenamiento.index]
+        x_fut = x.loc[fechas_siguientes(entrenamiento, h)]
+        ajuste = SARIMAX(entrenamiento, order=ORDEN, seasonal_order=ESTACIONAL,
+                         exog=x_tr, enforce_stationarity=False,
+                         enforce_invertibility=False).fit(disp=False)
+        ULTIMO["modelo"] = ajuste
+        return ajuste.forecast(h, exog=x_fut)
+    return modelo
 
 
-# TODO: el nombre del modelo, con sus órdenes, como aparece en la tabla.
-NOMBRE_CLASICO = "SARIMA del miniproyecto 1"
+NOMBRE_CLASICO = "SARIMAX(0,1,2)(0,1,2)₁₂ + días hábiles"
 
 
 def graficar_serie(serie):
@@ -98,7 +196,13 @@ def graficar_serie(serie):
 # ============================================================
 # Lo que aprende cada modelo: "nivel" es la serie tal cual; "dif12" es la
 # diferencia con el mismo mes del año anterior.
-OBJETIVO = "nivel"     # TODO: elija "nivel" o "dif12" y justifíquelo
+# Los modelos aprenden la diferencia con el mismo mes del año anterior
+# (dif12), no el nivel. La serie tiene tendencia y una estacionalidad fuerte
+# (fuerza estacional Fs = 0,87 en el miniproyecto 1); al restar y(t-12) se
+# quita casi toda la tendencia y la estacionalidad y el objetivo queda casi
+# estacionario, que es lo que KNN, SVR y los árboles extrapolan bien. Sobre el
+# nivel, en cambio, esos modelos no saben extrapolar una tendencia creciente.
+OBJETIVO = "dif12"
 REZAGOS = 12
 
 
@@ -112,22 +216,50 @@ def a_nivel(y, z):
 
 
 def tabla_supervisada(z):
-    """TODO: una fila por mes con los rezagos 1 a REZAGOS, al menos el mes del
-    año y al menos una estadística de ventana móvil.
+    """Una fila por mes con los rezagos 1..REZAGOS del objetivo, el mes del año
+    (codificado en seno y coseno) y dos estadísticas de ventana móvil.
 
-    Ninguna columna de la fila t puede usar z(t): los rezagos con shift(k) y
-    las ventanas sobre la serie ya corrida un mes.
+    Ninguna columna de la fila t usa z(t): los rezagos son z.shift(k) con
+    k>=1 y las ventanas se calculan sobre z.shift(1), es decir hasta el mes
+    anterior. Los rezagos se llaman rezago_1..rezago_12 porque las redes de
+    secuencia (LSTM, Conv1D) los leen en ese orden.
     """
-    raise NotImplementedError("tabla supervisada")
+    columnas = {f"rezago_{k}": z.shift(k) for k in range(1, REZAGOS + 1)}
+    mes = z.index.month
+    # El mes del año, cíclico: diciembre (12) queda junto a enero (1).
+    columnas["mes_sin"] = pd.Series(np.sin(2 * np.pi * mes / 12), index=z.index)
+    columnas["mes_cos"] = pd.Series(np.cos(2 * np.pi * mes / 12), index=z.index)
+    # Ventanas móviles sobre el objetivo corrido un mes (nunca ven z(t)).
+    movil = z.shift(1)
+    columnas["media_movil_3"] = movil.rolling(3).mean()
+    columnas["desv_movil_6"] = movil.rolling(6).std()
+    return pd.DataFrame(columnas, index=z.index)
 
 
 def comprobar_sin_fuga(serie):
-    """TODO: pruebe en el código que ninguna fila ve el mes que predice.
+    """Prueba en el código que ninguna fila ve el mes que predice.
 
-    Por ejemplo, cambie el valor de cada mes y verifique que su fila de la
-    tabla no cambie. Si una fila cambia, lance AssertionError.
+    Altera el valor de cada mes con un cambio grande y verifica que la fila de
+    la tabla de ESE mes no cambie: si cambiara, la fila estaría usando y(t)
+    —directamente o a través del objetivo z(t)— para predecir y(t). Si alguna
+    fila cambia, lanza AssertionError.
     """
-    raise NotImplementedError("prueba de que no hay fuga")
+    z0 = objetivo(serie)
+    X0 = tabla_supervisada(z0)
+    revisados = 0
+    for t in X0.index:
+        if X0.loc[t].isna().any():          # filas sin historia completa
+            continue
+        alterada = serie.copy()
+        alterada.loc[t] = alterada.loc[t] + 100.0   # cambio grande en y(t)
+        fila_alterada = tabla_supervisada(objetivo(alterada)).loc[t]
+        if not np.allclose(X0.loc[t].to_numpy(), fila_alterada.to_numpy(),
+                           equal_nan=True):
+            raise AssertionError(
+                f"Fuga: la fila {t:%Y-%m} cambia al alterar su propio mes")
+        revisados += 1
+    print(f"Sin fuga: {revisados} filas revisadas, ninguna cambia al alterar "
+          f"el mes que predice")
 
 
 def filas_completas(y):
@@ -138,14 +270,27 @@ def filas_completas(y):
 
 
 def recursivo(ajustado, y, h):
-    """TODO: pronóstico recursivo a h meses.
+    """Pronóstico recursivo a h meses.
 
-    Agregue el mes siguiente a y como NaN, arme la última fila de la tabla,
-    pronostique con ajustado.predict, devuelva el pronóstico al nivel con
-    a_nivel y escríbalo como si fuera dato antes de pasar al mes siguiente.
-    Devuelva los h pronósticos.
+    En cada paso agrega el mes siguiente como NaN, arma su fila de la tabla,
+    pronostica el objetivo con ajustado.predict, lo lleva al nivel con a_nivel
+    (usando la historia hasta el mes anterior, cuyo iloc[-12] es y(t-12)) y lo
+    escribe como si fuera dato antes de pasar al mes siguiente. Así cada
+    pronóstico entra como rezago del mes que sigue.
     """
-    raise NotImplementedError("pronóstico recursivo")
+    historia = y.copy()
+    pronosticos = []
+    for _ in range(h):
+        siguiente = historia.index[-1] + pd.offsets.MonthBegin(1)
+        futuro = pd.concat(
+            [historia, pd.Series([np.nan], index=[siguiente], name=historia.name)])
+        fila = tabla_supervisada(objetivo(futuro)).loc[[siguiente]]
+        z_hat = float(ajustado.predict(fila)[0])
+        y_hat = a_nivel(historia, z_hat)    # historia termina en t-1 -> iloc[-12]=y(t-12)
+        historia = pd.concat(
+            [historia, pd.Series([y_hat], index=[siguiente], name=historia.name)])
+        pronosticos.append(y_hat)
+    return np.array(pronosticos)
 
 
 def con_tabla(fabrica):
@@ -185,12 +330,12 @@ def xgboost(max_depth=3, learning_rate=0.1):
                         random_state=SEMILLA)
 
 
-# TODO: complete cada rejilla con dos a cuatro valores por hiperparámetro.
+# Cada rejilla lleva de dos a cuatro valores por hiperparámetro.
 REJILLAS = {
-    "KNN": (knn, {"n_neighbors": [5]}),
-    "SVR": (svr, {"C": [1.0], "epsilon": [0.1]}),
-    "Random Forest": (bosque, {"max_depth": [None], "min_samples_leaf": [1]}),
-    "XGBoost": (xgboost, {"max_depth": [3], "learning_rate": [0.1]}),
+    "KNN": (knn, {"n_neighbors": [3, 5, 10, 15]}),
+    "SVR": (svr, {"C": [1.0, 10.0, 100.0], "epsilon": [0.05, 0.1, 0.2]}),
+    "Random Forest": (bosque, {"max_depth": [None, 3, 5, 10], "min_samples_leaf": [1, 2, 4]}),
+    "XGBoost": (xgboost, {"max_depth": [2, 3, 4], "learning_rate": [0.05, 0.1, 0.2]}),
 }
 
 
@@ -199,24 +344,50 @@ def sin_prefijo(parametros):
 
 
 def ajustar_hiperparametros(serie):
-    """TODO: para cada modelo de REJILLAS, la combinación con menor RMSE en
-    validación temporal.
+    """Para cada modelo de REJILLAS, la combinación con menor RMSE en validación
+    temporal.
 
-    Arme la tabla con serie.iloc[:-N_PRUEBA], para que ninguno de los meses
-    del backtest decida, y busque con GridSearchCV y TimeSeriesSplit. KNN y
-    SVR son make_pipeline: sus claves en la rejilla llevan el prefijo del paso
-    (kneighborsregressor__n_neighbors). Imprima lo elegido y su RMSE de
-    validación. Devuelva {nombre: {hiperparámetro: valor}}; sin_prefijo
-    quita el prefijo.
+    La tabla se arma con serie.iloc[:-N_PRUEBA], de modo que ninguno de los 24
+    meses del backtest participa en la elección. La búsqueda es GridSearchCV con
+    TimeSeriesSplit (5 cortes): cada corte entrena con el pasado y valida con el
+    tramo siguiente, nunca al revés. KNN y SVR son make_pipeline, así que sus
+    claves llevan el prefijo del paso (p. ej. kneighborsregressor__n_neighbors);
+    sin_prefijo lo quita para devolver {hiperparámetro: valor}.
     """
-    raise NotImplementedError("hiperparámetros con validación temporal")
+    X, z = filas_completas(serie.iloc[:-N_PRUEBA])
+    corte_temporal = TimeSeriesSplit(n_splits=5)
+    elegidos = {}
+    print("  hiperparámetros (TimeSeriesSplit, solo meses previos al backtest):")
+    for nombre, (fabrica, rejilla) in REJILLAS.items():
+        estimador = fabrica()
+        prefijo = estimador.steps[-1][0] + "__" if hasattr(estimador, "steps") else ""
+        malla = {prefijo + clave: valores for clave, valores in rejilla.items()}
+        busqueda = GridSearchCV(estimador, malla, cv=corte_temporal,
+                                scoring="neg_root_mean_squared_error")
+        busqueda.fit(X, z)
+        elegidos[nombre] = sin_prefijo(busqueda.best_params_)
+        print(f"    {nombre}: {elegidos[nombre]}  "
+              f"RMSE_val={-busqueda.best_score_:.2f}")
+    return elegidos
 
 
 def graficar_importancia(serie, elegidos):
-    """TODO: importancia de las variables de Random Forest y XGBoost
-    (feature_importances_), ajustados con lo elegido; guarde
-    figuras/importancia.png."""
-    raise NotImplementedError("importancia de variables")
+    """Importancia de las variables de Random Forest y XGBoost, ajustados con lo
+    elegido sobre los meses previos al backtest; guarda figuras/importancia.png."""
+    X, z = filas_completas(serie.iloc[:-N_PRUEBA])
+    figura, ejes = plt.subplots(1, 2, figsize=(10, 5))
+    for eje, nombre, fabrica in [(ejes[0], "Random Forest", bosque),
+                                 (ejes[1], "XGBoost", xgboost)]:
+        modelo = fabrica(**elegidos[nombre]).fit(X, z)
+        imp = pd.Series(modelo.feature_importances_, index=X.columns).sort_values()
+        eje.barh(imp.index, imp.to_numpy(), color="steelblue")
+        eje.set_title(f"{nombre}", fontsize=11)
+        eje.tick_params(axis="y", labelsize=8)
+    figura.suptitle("Importancia de las variables")
+    figura.tight_layout()
+    figura.savefig(FIGURAS / "importancia.png", dpi=120)
+    plt.close(figura)
+    print("Importancia de variables en figuras/importancia.png")
 
 
 # ============================================================
@@ -225,7 +396,10 @@ def graficar_importancia(serie, elegidos):
 # Redes pequeñas y pocas épocas: el guion completo tiene que correr en CPU
 # en pocos minutos.
 EPOCAS_MAXIMAS = 300
-TASA = 0.01
+# Tasa de aprendizaje: con 0.01 el entrenamiento de pleno lote del MLP divergía
+# en algunos orígenes del backtest (RMSE ~1e4); con 0.005 las tres redes
+# entrenan estables en todo el rango de épocas.
+TASA = 0.005
 
 
 class Red:
@@ -264,6 +438,9 @@ class Red:
             optimizador.zero_grad()
             error = perdida(self.red(x), objetivo_t)
             error.backward()
+            # Recorte de la norma del gradiente, como segundo seguro contra la
+            # divergencia del entrenamiento de pleno lote.
+            nn.utils.clip_grad_norm_(self.red.parameters(), max_norm=1.0)
             optimizador.step()
             fila = [error.item()]
             if X_val is not None:
@@ -289,40 +466,97 @@ class MLP(nn.Module):
 
 
 class LSTM(nn.Module):
-    """TODO: nn.LSTM de una capa sobre la secuencia (lote, 12, 1) y una capa
-    lineal que lee el último estado oculto."""
+    """nn.LSTM de una capa sobre la secuencia (lote, 12, 1) y una capa lineal
+    que lee el último estado oculto."""
 
-    def __init__(self, ocultas=16):
+    def __init__(self, entradas=1, ocultas=16):
         super().__init__()
-        raise NotImplementedError("LSTM")
+        self.lstm = nn.LSTM(entradas, ocultas, batch_first=True)
+        self.salida = nn.Linear(ocultas, 1)
+
+    def forward(self, x):
+        _, (estado, _) = self.lstm(x)      # estado: (1, lote, ocultas)
+        return self.salida(estado[-1])     # lee el último estado oculto
 
 
-# TODO: la tercera red, a elección: Conv1D, un híbrido (el clásico más una
-# red sobre sus residuos) o un Transformer pequeño. Una Conv1D o un
-# Transformer reciben la secuencia como la LSTM y entran en CANDIDATAS. Un
-# híbrido no pasa por con_tabla: escriba su propia función
-# modelo(entrenamiento, h) y agregue su fila en main.
+class Conv1D(nn.Module):
+    """La tercera red: una convolución 1D sobre la secuencia (lote, 12, 1).
+
+    Una capa Conv1d (un canal de entrada -> `canales`, núcleo 3) con ReLU lee
+    ventanas de tres meses de los rezagos; un promedio global sobre el tiempo
+    resume la secuencia y una capa lineal da el pronóstico. Se eligió frente a
+    un Transformer o un híbrido porque, con solo ~170 filas por origen, una red
+    convolucional pequeña es la que mejor aprovecha los datos sin sobreajustar
+    y entra limpia en el mismo mecanismo de secuencia que la LSTM.
+    """
+
+    def __init__(self, entradas=1, canales=16, nucleo=3):
+        super().__init__()
+        self.conv = nn.Conv1d(entradas, canales, kernel_size=nucleo, padding=nucleo // 2)
+        self.salida = nn.Linear(canales, 1)
+
+    def forward(self, x):
+        z = x.transpose(1, 2)              # (lote, 12, 1) -> (lote, 1, 12)
+        z = torch.relu(self.conv(z))       # (lote, canales, 12)
+        z = z.mean(dim=2)                  # promedio global en el tiempo
+        return self.salida(z)
 
 
-# Las candidatas: nombre, cómo se construye y si recibe la secuencia.
-# TODO: agregue la LSTM, con secuencia=True, y la tercera red.
+# Las candidatas: nombre, cómo se construye y si recibe la secuencia. Los dos
+# tamaños de MLP reciben las columnas sueltas; la LSTM y la Conv1D reciben la
+# secuencia de rezagos (lote, 12, 1).
 CANDIDATAS = {
     "MLP (8 ocultas)": (lambda n: MLP(n, 8), False),
     "MLP (32 ocultas)": (lambda n: MLP(n, 32), False),
+    "LSTM (16 ocultas)": (lambda n: LSTM(n, 16), True),
+    "Conv1D (16 canales)": (lambda n: Conv1D(n, 16), True),
 }
 
 
 def validar_redes(serie):
-    """TODO: elija las épocas de cada red con validación temporal.
+    """Elige las épocas de cada red con validación temporal.
 
-    Arme la tabla con serie.iloc[:-N_PRUEBA] y deje sus últimos 12 meses de
-    validación. Entrene cada candidata con Red(...).fit(X_ent, z_ent, X_val,
-    z_val): red.perdidas guarda por época la pérdida de entrenamiento y la de
-    validación. Grafique las curvas en figuras/perdida.png, quédese con el
-    MLP de menor pérdida de validación y devuelva {nombre: épocas}, con las
-    épocas de menor pérdida de validación de cada red.
+    La tabla se arma con serie.iloc[:-N_PRUEBA] (ningún mes del backtest entra)
+    y sus últimos 12 meses son la validación. Cada candidata se entrena hasta
+    EPOCAS_MAXIMAS guardando por época la pérdida de entrenamiento y la de
+    validación; las curvas van a figuras/perdida.png. De cada red se toman las
+    épocas de menor pérdida de validación, y entre los dos MLP se conserva solo
+    el de menor pérdida. Devuelve {nombre: épocas}.
     """
-    raise NotImplementedError("validación de las redes")
+    X, z = filas_completas(serie.iloc[:-N_PRUEBA])
+    X_ent, z_ent = X.iloc[:-12], z.iloc[:-12]
+    X_val, z_val = X.iloc[-12:], z.iloc[-12:]
+
+    figura, ejes = plt.subplots(2, 2, figsize=(10, 7), sharex=True)
+    epocas, val_min = {}, {}
+    for (nombre, (construir, secuencia)), eje in zip(CANDIDATAS.items(), ejes.ravel()):
+        modelo = Red(construir, secuencia, EPOCAS_MAXIMAS).fit(X_ent, z_ent, X_val, z_val)
+        perdidas = np.array(modelo.perdidas)        # columnas: entrenamiento, validación
+        e_opt = int(np.argmin(perdidas[:, 1])) + 1
+        epocas[nombre] = e_opt
+        val_min[nombre] = perdidas[:, 1].min()
+        eje.plot(range(1, len(perdidas) + 1), perdidas[:, 0], color="steelblue",
+                 label="entrenamiento")
+        eje.plot(range(1, len(perdidas) + 1), perdidas[:, 1], color="crimson",
+                 label="validación")
+        eje.axvline(e_opt, ls="--", lw=.8, color="gray")
+        eje.set_title(f"{nombre}: mín. validación @ {e_opt} épocas", fontsize=9)
+        eje.set_ylabel("MSE (escala del objetivo)", fontsize=8)
+    ejes.ravel()[0].legend(fontsize=8)
+    for eje in ejes[-1]:
+        eje.set_xlabel("época")
+    figura.suptitle("Validación temporal de las redes: pérdida por época")
+    figura.tight_layout()
+    figura.savefig(FIGURAS / "perdida.png", dpi=120)
+    plt.close(figura)
+
+    # Entre los dos tamaños de MLP se queda el de menor pérdida de validación.
+    mlps = {n: v for n, v in val_min.items() if n.startswith("MLP")}
+    mejor_mlp = min(mlps, key=mlps.get)
+    for n in [n for n in list(epocas) if n.startswith("MLP") and n != mejor_mlp]:
+        del epocas[n]
+    print(f"  MLP elegido: {mejor_mlp} (val {val_min[mejor_mlp]:.3f}); épocas {epocas}")
+    return epocas
 
 
 def red(nombre, epocas, semilla=SEMILLA):
@@ -332,12 +566,22 @@ def red(nombre, epocas, semilla=SEMILLA):
 
 
 def repetir_con_semillas(serie, nombre, epocas):
-    """TODO: la mejor red con cinco semillas, cada una por el backtest.
+    """La mejor red con cinco semillas, cada una por el backtest.
 
-    Use con_tabla(red(nombre, epocas, semilla)). Guarde resultados/semillas.csv
-    con una fila por semilla e imprima la media y la desviación del RMSE.
+    Mide la variación del RMSE de la red al cambiar solo la semilla de la
+    inicialización. Guarda resultados/semillas.csv con una fila por semilla e
+    imprime la media y la desviación del RMSE.
     """
-    raise NotImplementedError("cinco semillas")
+    filas = []
+    for semilla in range(SEMILLA, SEMILLA + 5):
+        _, promedio = backtest(serie, con_tabla(red(nombre, epocas, semilla)))
+        filas.append({"semilla": semilla, "RMSE": round(promedio["RMSE"], 3)})
+    tabla = pd.DataFrame(filas)
+    tabla.to_csv(RESULTADOS / "semillas.csv", index=False)
+    media, desv = tabla["RMSE"].mean(), tabla["RMSE"].std()
+    print(f"  {nombre} con 5 semillas: RMSE media={media:.3f}, desv={desv:.3f} "
+          f"(min {tabla['RMSE'].min():.3f}, max {tabla['RMSE'].max():.3f})")
+    return tabla
 
 
 # ============================================================

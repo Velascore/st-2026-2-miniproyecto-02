@@ -31,9 +31,7 @@ del grupo. Si falta algún dato, se advierte en la realimentación.
 
 | Nombre completo | Código | Correo institucional |
 |---|---|---|
-| | | |
-| | | |
-| | | |
+| Camilo Andrés Velasco | 1144179583 | camilo_and.velasco@uao.edu.co |
 
 ## Entrega
 
