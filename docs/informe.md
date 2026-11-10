@@ -4,6 +4,37 @@ Serie **IPN32221N** — Índice de producción industrial de fabricación de caj
 de cartón corrugado y fibra sólida (EE. UU.). Las cifras y figuras de este
 informe son las que imprime y genera `python miniproyecto.py`.
 
+## Cómo se comparan todos los modelos
+
+Antes de cada paso conviene fijar la **regla de medición**, porque es la misma
+para todos los modelos del informe —el clásico, los cuatro de aprendizaje
+automático y las tres redes— y es lo que hace que las cifras sean comparables.
+Esa regla vive en `comun.py` y **no se modifica**.
+
+**El *backtest* (origen móvil).** En lugar de medir el error una sola vez, se
+imita cómo se habría usado el modelo mes a mes en el pasado reciente. Se apartan
+los **últimos 24 meses** como zona de prueba y se recorren **13 orígenes**
+consecutivos. En cada origen el modelo se entrena **solo con los meses
+anteriores** a ese punto y pronostica los **12 meses siguientes** (horizonte 1 a
+12); como nada posterior al origen entra al entrenamiento, el modelo nunca "ve el
+futuro". El error de los 13 orígenes se promedia, así la cifra final no depende
+de un mes afortunado. Cada modelo se entrega como una función
+`modelo(entrenamiento, h)` que el *backtest* llama; ese es el único contrato que
+hay que cumplir para entrar en la comparación.
+
+**Las métricas.** Comparando cada pronóstico con lo que de verdad ocurrió se
+calculan tres, todas donde **más bajo es mejor**:
+
+- **RMSE** (raíz del error cuadrático medio): castiga más los errores grandes; es
+  la métrica principal por la que se ordena la tabla final.
+- **MAE** (error absoluto medio): el error típico, en las unidades del índice.
+- **MAPE** (error porcentual absoluto medio): el mismo error pero en porcentaje,
+  para leerlo sin pensar en la escala.
+
+La **fila de referencia** es el mejor modelo clásico del miniproyecto 1. La
+pregunta de todo el miniproyecto es si algún modelo de aprendizaje automático o
+profundo lo mejora **de forma fiable** bajo esta misma regla.
+
 ## 1. La serie y el modelo a superar
 
 La serie mide el **índice de producción industrial de la fabricación de cajas de
@@ -45,6 +76,12 @@ ingenuo (RMSE 2.17) es el piso.
 
 ## 2. La tabla supervisada
 
+Los modelos de aprendizaje automático y las redes no entienden "una serie" como
+tal: aprenden de una **tabla** en la que cada fila asocia unas variables de
+entrada ($X$) con el valor a predecir ($y$). El paso previo, entonces, es
+convertir la serie en esa tabla —un proceso llamado *conversión supervisada*—
+cuidando que **ninguna fila use información posterior al mes que predice**.
+
 Cada fila $t$ de la tabla tiene **16 columnas**, todas construidas para no ver el
 mes que predice:
 
@@ -55,7 +92,7 @@ mes que predice:
   diciembre quede junto a enero.
 - **Dos ventanas móviles** sobre el objetivo corrido un mes (`media_movil_3`, `desv_movil_6`):
   $\tfrac{1}{3}\sum_{j=1}^{3} z_{t-j}$ y
-  $\operatorname{sd}(z_{t-1},\dots,z_{t-6})$.
+  $\mathrm{sd}(z_{t-1},\dots,z_{t-6})$.
 
 Los modelos **no aprenden el nivel sino la diferencia con el mismo mes del año
 anterior** (`OBJETIVO = "dif12"`): $z_t = y_t - y_{t-12} = (1-B^{12})\,y_t$. Se
@@ -85,7 +122,15 @@ modo que el escalador se ajusta **solo con el entrenamiento de ese origen**.
 
 ## 3. Aprendizaje automático
 
-Los hiperparámetros se eligen con `GridSearchCV` y `TimeSeriesSplit` (5 cortes)
+Sobre la tabla anterior se prueban cuatro modelos clásicos de ML: **KNN**
+(predice promediando los vecinos más parecidos), **SVR** (una regresión de
+margen que tolera errores pequeños), **Random Forest** (un conjunto de árboles de
+decisión promediados) y **XGBoost** (árboles que corrigen uno a uno el error del
+anterior). Cada uno tiene **hiperparámetros** —ajustes que no se aprenden solos—
+que hay que fijar.
+
+Los hiperparámetros se eligen con `GridSearchCV` (prueba todas las combinaciones
+de una rejilla) y `TimeSeriesSplit` (5 cortes)
 sobre la tabla armada con `serie.iloc[:-24]`, es decir **solo con los meses
 anteriores al *backtest***: cada corte entrena con el pasado y valida con el
 tramo siguiente, nunca al revés, y **ninguno de los 24 meses del *backtest*
@@ -114,7 +159,11 @@ estacional ingenuo (2.17). Ninguno alcanza al clásico.
 
 ## 4. Aprendizaje profundo
 
-Las tres redes, todas con semilla fija y con $X$ y $z$ escalados con el
+Se entrenan tres redes en PyTorch, cada una con una forma distinta de mirar los
+12 rezagos: el **MLP** (red densa) los toma como 16 valores sueltos; la **LSTM**
+los recorre como una secuencia en el tiempo, guardando memoria de lo que vio; y
+la **Conv1D** desliza un filtro a lo largo de la secuencia para detectar
+patrones locales. Todas con semilla fija y con $X$ y $z$ escalados con el
 entrenamiento de cada origen:
 
 | Red | Entrada | Parámetros |
